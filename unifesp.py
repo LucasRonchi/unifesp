@@ -1,6 +1,8 @@
 import cv2
+import socket
+import time
+
 from mediapipe.python.solutions.hands import Hands, HandLandmark
-from djitellopy import Tello  # pip install djitellopy
 
 
 class FingerDetector:
@@ -19,10 +21,7 @@ class FingerDetector:
             0 -> abaixado
         """
 
-        # OpenCV usa BGR, MediaPipe espera RGB
-        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-
-        result = self.hands.process(rgb)
+        result = self.hands.process(image)
 
         if (
             not result.multi_hand_landmarks
@@ -63,58 +62,170 @@ class FingerDetector:
         ]
 
 
-if __name__ == '__main__':
+class TelloUDP:
+    IP = "192.168.10.1"
+    COMMAND_PORT = 8889
+
+    def __init__(self):
+        self.socket = socket.socket(
+            socket.AF_INET,
+            socket.SOCK_DGRAM
+        )
+
+        self.address = (
+            self.IP,
+            self.COMMAND_PORT
+        )
+
+    def send_command(self, command: str):
+        print(f">>> {command}")
+
+        self.socket.sendto(
+            command.encode("utf-8"),
+            self.address
+        )
+
+        return None
+
+        try:
+            self.socket.settimeout(5)
+
+            response, _ = self.socket.recvfrom(1024)
+
+            response = response.decode("utf-8")
+
+            print(f"<<< {response}")
+
+            return response
+
+        except socket.timeout:
+            print("<<< timeout")
+            return None
+
+        finally:
+            self.socket.settimeout(None)
+
+    def command(self):
+        return self.send_command("command")
+
+    def streamon(self):
+        return self.send_command("streamon")
+
+    def streamoff(self):
+        return self.send_command("streamoff")
+
+    def takeoff(self):
+        return self.send_command("takeoff")
+
+    def land(self):
+        return self.send_command("land")
+
+    def emergency(self):
+        return self.send_command("emergency")
+
+    def rc(self, left_right, forward_backward, up_down, yaw):
+        command = (
+            f"rc "
+            f"{left_right} "
+            f"{forward_backward} "
+            f"{up_down} "
+            f"{yaw}"
+        )
+
+        return self.send_command(command)
+
+    def close(self):
+        self.socket.close()
+
+
+if __name__ == "__main__":
+
     detector = FingerDetector()
 
-    tello = Tello()
-    tello.connect()
+    tello = TelloUDP()
+
+    # -------------------------
+    # CONECTA AO TELLO
+    # -------------------------
+
+    print("Conectando ao Tello...")
+
+    if tello.command() != "ok":
+        raise RuntimeError("Não foi possível entrar no command mode")
+
+    print("Tello conectado!")
+
+    # -------------------------
+    # INICIA VÍDEO
+    # -------------------------
+
     tello.streamon()
 
-    frame_read = tello.get_frame_read()
+    time.sleep(2)
 
-    while True:
-        frame = frame_read.frame
+    # Tello envia vídeo para UDP 11111
+    video = cv2.VideoCapture(
+        "udp://0.0.0.0:11111",
+        cv2.CAP_FFMPEG
+    )
 
-        if not frame:
-            print("Erro ao capturar imagem")
-            tello.send_rc_control(0, 0, 0, 0)
-            continue
+    if not video.isOpened():
+        raise RuntimeError(
+            "Não foi possível abrir o stream de vídeo UDP"
+        )
 
-        cv2.imshow('Teste detector', frame)
-        if cv2.waitKey(1) & 0xFF == 27:  # ESC para sair
-            tello.send_rc_control(0, 0, 0, 0)
-            cv2.destroyAllWindows()
-            break
+    try:
+        while True:
+            ret, frame = video.read()
 
-        result = detector.detect(frame)
-        print(f'detection: {result}')
+            if not ret or frame is None:
+                print("Erro ao capturar imagem")
+                tello.rc(0, 0, 0, 0)
+                continue
 
-        match result:
-            case [1, 1, 1, 1, 0, 0, 1, 1, 1, 1]:
-                tello.send_rc_control(0, 0, 0, 0)
-                tello.takeoff()
-            case [0, 0, 0, 0, 1, 1, 0, 0, 0, 0]:
-                tello.send_rc_control(0, 0, 0, 0)
-                tello.land()
+            cv2.imshow("Teste detector", frame)
 
-            case [0, 0, 0, 1, 0, 0, 1, 0, 0, 0]:
-                tello.send_rc_control(0, 0, 20, 0)  # up
-            case [0, 0, 0, 1, 1, 1, 1, 0, 0, 0]:
-                tello.send_rc_control(0, 0, -20, 0)  # down
+            if cv2.waitKey(1) & 0xFF == 27:  # ESC
+                tello.rc(0, 0, 0, 0)
+                break
 
-            case [0, 0, 0, 1, 1, 1, 1, 0, 0, 0]:
-                tello.send_rc_control(0, 20, 0, 0)  # forward
-            case [1, 1, 1, 0, 0, 0, 0, 1, 1, 1]:
-                tello.send_rc_control(0, -20, 0, 0)  # backward
+            result = detector.detect(frame)
+            print(f"detection: {result}")
 
-            case [0, 0, 0, 0, 1, 1, 1, 0, 0, 0]:
-                tello.send_rc_control(20, 0, 0, 0)  # left
-            case [0, 0, 0, 1, 1, 1, 0, 0, 0, 0]:
-                tello.send_rc_control(-20, 0, 0, 0)  # right
+            match result:
+                case [1, 1, 1, 1, 0, 0, 1, 1, 1, 1]:  # Takeoff
+                    tello.rc(0, 0, 0, 0)
+                    tello.takeoff()
+                case [0, 0, 0, 0, 1, 1, 0, 0, 0, 0]:  # Land
+                    tello.rc(0, 0, 0, 0)
+                    tello.land()
 
-            case [1, 0, 0, 1, 1, 1, 1, 0, 0, 1]:
-                tello.send_rc_control(0, 0, 0, 0)
-                tello.flip_back()
+                case [0, 0, 0, 1, 0, 0, 1, 0, 0, 0]:  # Up
+                    tello.rc(0, 0, 20, 0)
+                case [0, 0, 0, 1, 1, 1, 1, 0, 0, 0]:  # Down
+                    tello.rc(0, 0, -20, 0)
 
-            case _:
-                tello.send_rc_control(0, 0, 0, 0)
+                case [0, 0, 0, 1, 1, 1, 1, 0, 0, 0]:  # Forward
+                    tello.rc(0, 20, 0, 0)
+                case [1, 1, 1, 0, 0, 0, 0, 1, 1, 1]:  # Backward
+                    tello.rc(0, -20, 0, 0)
+
+                case [0, 0, 0, 0, 1, 1, 1, 0, 0, 0]:  # Left
+                    tello.rc(20,  0,  0,  0)
+                case [0, 0, 0, 1, 1, 1, 0, 0, 0, 0]:  # Right
+                    tello.rc(-20, 0, 0, 0)
+
+                case [1, 0, 0, 1, 1, 1, 1, 0, 0, 1]:  # Flip
+                    tello.rc(0, 0, 0, 0)
+                    tello.send_command("flip b")
+
+                case _:
+                    tello.rc(0, 0, 0, 0)
+
+    finally:
+        print("Encerrando...")
+        tello.rc(0, 0, 0, 0)
+        tello.streamoff()
+        video.release()
+        tello.close()
+        cv2.destroyAllWindows()
