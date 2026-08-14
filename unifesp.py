@@ -1,3 +1,4 @@
+import threading
 import cv2
 import socket
 import time
@@ -138,59 +139,77 @@ class TelloUDP:
         self.socket.close()
 
 
+class Camera:
+    def __init__(self, index=0):
+        self.cap = cv2.VideoCapture(
+            "udp://0.0.0.0:11111",
+            cv2.CAP_FFMPEG
+        )
+
+        self.frame = None
+        self.lock = threading.Lock()
+        self.running = True
+
+        self.thread = threading.Thread(
+            target=self._capture_loop,
+            daemon=True
+        )
+        self.thread.start()
+
+    def _capture_loop(self):
+        while self.running:
+            ret, frame = self.cap.read()
+
+            if not ret:
+                continue
+
+            with self.lock:
+                self.frame = frame
+
+    def get_frame(self):
+        with self.lock:
+            if self.frame is None:
+                return None
+
+            return self.frame.copy()
+
+    def release(self):
+        self.running = False
+        self.thread.join()
+        self.cap.release()
+
+
 if __name__ == "__main__":
 
     detector = FingerDetector()
 
     tello = TelloUDP()
 
-    # -------------------------
-    # CONECTA AO TELLO
-    # -------------------------
-
     print("Conectando ao Tello...")
 
-    if tello.command() != "ok":
-        raise RuntimeError("Não foi possível entrar no command mode")
-
-    print("Tello conectado!")
-
-    # -------------------------
-    # INICIA VÍDEO
-    # -------------------------
-
+    tello.command()
+    time.sleep(2)
     tello.streamon()
-
     time.sleep(2)
 
-    # Tello envia vídeo para UDP 11111
-    video = cv2.VideoCapture(
-        "udp://0.0.0.0:11111",
-        cv2.CAP_FFMPEG
-    )
-
-    if not video.isOpened():
-        raise RuntimeError(
-            "Não foi possível abrir o stream de vídeo UDP"
-        )
+    camera = Camera()
 
     try:
         while True:
-            ret, frame = video.read()
+            frame = camera.get_frame()
 
-            if not ret or frame is None:
+            if frame is None:
                 print("Erro ao capturar imagem")
                 tello.rc(0, 0, 0, 0)
                 continue
 
-            cv2.imshow("Teste detector", frame)
-
-            if cv2.waitKey(1) & 0xFF == 27:  # ESC
-                tello.rc(0, 0, 0, 0)
-                break
-
             result = detector.detect(frame)
             print(f"detection: {result}")
+
+            cv2.imshow("Camera", frame)
+
+            if cv2.waitKey(1) == 27:  # ESQ
+                break
 
             match result:
                 case [1, 1, 1, 1, 0, 0, 1, 1, 1, 1]:  # Takeoff
@@ -226,6 +245,6 @@ if __name__ == "__main__":
         print("Encerrando...")
         tello.rc(0, 0, 0, 0)
         tello.streamoff()
-        video.release()
+        camera.release()
         tello.close()
         cv2.destroyAllWindows()
