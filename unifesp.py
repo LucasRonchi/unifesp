@@ -187,10 +187,19 @@ if __name__ == "__main__":
 
     print("Conectando ao Tello...")
 
+    time.sleep(10)
     tello.command()
     time.sleep(2)
     tello.streamon()
     time.sleep(2)
+    tello.takeoff()
+    time.sleep(10)
+    tello.send_command("up 100")
+    time.sleep(10)
+    tello.send_command("right 300")
+    time.sleep(10)
+    tello.send_command("forward 300")
+    time.sleep(10)
 
     camera = Camera()
 
@@ -212,31 +221,35 @@ if __name__ == "__main__":
                 break
 
             match result:
-                case [1, 1, 1, 1, 0, 0, 1, 1, 1, 1]:  # Takeoff
-                    tello.rc(0, 0, 0, 0)
-                    tello.takeoff()
+                # case [1, 1, 1, 1, 0, 0, 1, 1, 1, 1]:  # Takeoff
+                #     tello.rc(0, 0, 0, 0)
                 case [0, 0, 0, 0, 1, 1, 0, 0, 0, 0]:  # Land
                     tello.rc(0, 0, 0, 0)
                     tello.land()
+                    time.sleep(15)
+                    tello.takeoff()
+                    time.sleep(15)
+                    tello.send_command("up 100")
+                    time.sleep(10)
 
-                case [0, 0, 0, 1, 0, 0, 1, 0, 0, 0]:  # Up
-                    tello.rc(0, 0, 20, 0)
-                case [0, 0, 0, 1, 1, 1, 1, 0, 0, 0]:  # Down
-                    tello.rc(0, 0, -20, 0)
+                # case [0, 0, 0, 1, 0, 0, 1, 0, 0, 0]:  # Up
+                #     tello.rc(0, 0, 20, 0)
+                # case [0, 0, 0, 1, 1, 1, 1, 0, 0, 0]:  # Down
+                #     tello.rc(0, 0, -20, 0)
 
                 case [0, 0, 0, 1, 1, 1, 1, 0, 0, 0]:  # Forward
                     tello.rc(0, 20, 0, 0)
-                case [1, 1, 1, 0, 0, 0, 0, 1, 1, 1]:  # Backward
+                case [1, 0, 0, 1, 1, 1, 1, 0, 0, 1]:  # Backward
                     tello.rc(0, -20, 0, 0)
 
-                case [0, 0, 0, 0, 1, 1, 1, 0, 0, 0]:  # Left
+                case [0, 0, 0, 0, 1, 1, 1, 1, 1, 1]:  # Left
                     tello.rc(20,  0,  0,  0)
-                case [0, 0, 0, 1, 1, 1, 0, 0, 0, 0]:  # Right
+                case [1, 1, 1, 1, 1, 1, 0, 0, 0, 0]:  # Right
                     tello.rc(-20, 0, 0, 0)
 
-                case [1, 0, 0, 1, 1, 1, 1, 0, 0, 1]:  # Flip
-                    tello.rc(0, 0, 0, 0)
-                    tello.send_command("flip b")
+                # case [1, 0, 0, 1, 1, 1, 1, 0, 0, 1]:  # Flip
+                #     tello.rc(0, 0, 0, 0)
+                #     tello.send_command("flip b")
 
                 case _:
                     tello.rc(0, 0, 0, 0)
